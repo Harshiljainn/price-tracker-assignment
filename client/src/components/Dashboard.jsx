@@ -56,11 +56,19 @@ export default function Dashboard({ onViewDetails }) {
 
   // Briefly show a loading indicator on each search keystroke for visual feedback.
   // Does NOT make any API request — client-side filtering above runs synchronously.
+  // IMPORTANT: always reset on cleanup so rapid clears or race conditions cannot
+  // leave searchLoading=true permanently.
   useEffect(() => {
-    if (search === '') return; // clearing the box: no flash needed
+    if (search === '') {
+      setSearchLoading(false); // ensure cleared state never shows a spinner
+      return;
+    }
     setSearchLoading(true);
     const t = setTimeout(() => setSearchLoading(false), 275);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      setSearchLoading(false); // always reset on cleanup
+    };
   }, [search]);
 
   const handleAddProduct = async (e) => {
@@ -254,7 +262,7 @@ export default function Dashboard({ onViewDetails }) {
       {fetchError && <div className="error-banner">{fetchError}</div>}
 
       <div className="products-grid">
-        {(loading || searchLoading) ? (
+        {loading ? (
           <div className="loading-state">
             <RefreshCw className="spin icon-large" />
             <p>Loading products...</p>

@@ -686,11 +686,73 @@ async function attemptScrapeWithPage(page, url, attemptNum) {
 // Public API
 // ---------------------------------------------------------------------------
 
+let globalBrowser = null;
+let browserLaunching = null; // Promise guard against concurrent launches
+
+/**
+ * Returns the shared Chromium browser instance, launching it if needed.
+ *
+ * Handles two production failure modes:
+ *  1. First launch: a single Promise is shared so concurrent callers don't
+ *     race to start two browsers simultaneously.
+ *  2. Crash / disconnect: browser.isConnected() is checked on every call.
+ *     A disconnected browser is replaced with a fresh one transparently.
+ */
+async function getBrowser(headless = true) {
+  // If we have a browser, check it is still alive before returning it.
+  if (globalBrowser) {
+    if (globalBrowser.isConnected()) {
+      return globalBrowser;
+    }
+    // Browser crashed or was killed externally — clear the stale reference.
+    console.warn('[scraper] Global browser disconnected — relaunching...');
+    globalBrowser = null;
+    browserLaunching = null;
+  }
+
+  // Prevent concurrent launches: if one is already in flight, wait for it.
+  if (browserLaunching) {
+    return browserLaunching;
+  }
+
+  browserLaunching = (async () => {
+    const tB0 = Date.now();
+    try {
+      const browser = await chromium.launch({
+        headless,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+        ],
+      });
+      // Automatically clear the reference if the browser crashes at runtime.
+      browser.on('disconnected', () => {
+        console.warn('[scraper] Global browser emitted disconnected event — will relaunch on next scrape.');
+        globalBrowser = null;
+        browserLaunching = null;
+      });
+      globalBrowser = browser;
+      console.log(`[scraper] Global browser launched in ${Date.now() - tB0}ms`);
+      return browser;
+    } catch (launchErr) {
+      // Clear the lock so the next caller can retry.
+      browserLaunching = null;
+      throw launchErr;
+    } finally {
+      // Release the launch lock (unless it was cleared in catch above).
+      if (browserLaunching !== null) browserLaunching = null;
+    }
+  })();
+
+  return browserLaunching;
+}
+
 /**
  * Scrape the current price and stock status for a product URL.
  *
  * Key optimizations over previous version:
- * - Single browser launched once, reused across all retry attempts.
+ * - Single GLOBAL browser launched once, reused across all scrape requests.
  * - Hard failures (404, navigation error, no price block) are not retried.
  * - Adaptive hover: stops wiggling as soon as button is enabled.
  * - Per-stage timing logged on every attempt.
@@ -699,18 +761,6 @@ async function attemptScrapeWithPage(page, url, attemptNum) {
  * @param {string} url         - Full product URL.
  * @param {object} [opts]
  * @param {boolean} [opts.headless=true] - Run Playwright in headless mode.
- *
- * @returns {Promise<{
- *   success: boolean,
- *   url: string,
- *   price: number|null,
- *   mrp: number|null,
- *   inStock: boolean|null,
- *   quantity: number|null,
- *   title: string|null,
- *   attempts: number,
- *   error: string|null
- * }>}
  */
 async function scrapeProduct(url, { headless = true } = {}) {
   if (!url || typeof url !== "string") {
@@ -726,19 +776,11 @@ async function scrapeProduct(url, { headless = true } = {}) {
     };
   }
 
-  let browser;
   let lastError = null;
-
+  const totalT0 = Date.now();
+  
   try {
-    // Launch ONE browser for all attempts (saves ~3s overhead)
-    browser = await chromium.launch({
-      headless,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-      ],
-    });
+    const browser = await getBrowser(headless);
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       if (attempt > 1) {
@@ -750,12 +792,14 @@ async function scrapeProduct(url, { headless = true } = {}) {
       }
 
       // Create a FRESH context and page for every attempt.
-      // Reusing the same page triggers the store's heavy anti-bot (withholding .price-block).
+      const tCtx0 = Date.now();
       const context = await browser.newContext({
         viewport: { width: 1280, height: 800 },
       });
       const page = await context.newPage();
       page.setDefaultTimeout(NAV_TIMEOUT_MS);
+      const contextCreationTime = Date.now() - tCtx0;
+      console.log(`[scraper] Attempt ${attempt} Context/Page created in ${contextCreationTime}ms`);
 
       try {
         const result = await attemptScrapeWithPage(page, url, attempt);
@@ -790,12 +834,9 @@ async function scrapeProduct(url, { headless = true } = {}) {
         }
       }
     }
-
-
-  } finally {
-    if (browser) {
-      await browser.close().catch(() => {});
-    }
+  } catch (err) {
+    lastError = err.message || String(err);
+    console.error(`[scraper] Fatal error outside retry loop: ${lastError}`);
   }
 
   console.error(`[scraper] All attempts failed for: ${url}`);
