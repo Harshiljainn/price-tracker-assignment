@@ -2,8 +2,8 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const db = require("./db");
-const { scrapeProduct } = require("./scraper");
 const alerts = require("./alerts");
+const { runScrapeAndAlert } = require("./services/scrapeService");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -136,58 +136,16 @@ app.post("/api/products/:id/scrape", async (req, res) => {
       return res.status(404).json({ error: "Product not found" });
     }
 
-    const startTime = Date.now();
-    const scrapeResult = await scrapeProduct(product.url);
-    const durationMs = Date.now() - startTime;
+    const scrapeResult = await runScrapeAndAlert(product);
 
-    if (scrapeResult.success && scrapeResult.price !== null) {
-      await db.savePriceHistory(
-        id,
-        scrapeResult.price,
-        scrapeResult.mrp,
-        scrapeResult.inStock,
-        scrapeResult.quantity
-      );
-      
-      if (scrapeResult.title && scrapeResult.title !== product.name) {
-        await db.updateProductName(id, scrapeResult.title);
-      }
-
-      // Save success log
-      await db.saveScrapeLog(
-        id,
-        "SUCCESS",
-        scrapeResult.attempts,
-        "Scrape completed successfully",
-        durationMs
-      );
-
-      res.json({
-        success: true,
-        price: scrapeResult.price,
-        mrp: scrapeResult.mrp,
-        inStock: scrapeResult.inStock,
-        quantity: scrapeResult.quantity,
-        durationMs
-      });
+    if (scrapeResult.success) {
+      res.json(scrapeResult);
     } else {
-      // Failed scrape
-      await db.saveScrapeLog(
-        id,
-        "FAILED",
-        scrapeResult.attempts,
-        scrapeResult.error || "Scrape failed without explicit error",
-        durationMs
-      );
-
-      // We still return 200 because the API call technically succeeded in running the job, 
-      // but we indicate success: false in the JSON body.
-      // 500 would imply the server crashed.
       res.json({
         success: false,
         error: scrapeResult.error,
         attempts: scrapeResult.attempts,
-        durationMs
+        durationMs: scrapeResult.durationMs
       });
     }
 
@@ -295,119 +253,19 @@ app.post("/api/cron/scrape", async (req, res) => {
 
       for (const product of products) {
         console.log(`[cron] Scraping product ${product.id} — ${product.url}`);
-        const startTime = Date.now();
-        let scrapeResult;
-        let previousState = null;
-
-        try {
-          const history = await db.getPriceHistory(product.id, 1);
-          if (history && history.length > 0) {
-            previousState = history[0];
-          }
-        } catch (err) {
-          console.error(`[cron] Failed to fetch previous state for ${product.id}:`, err.message);
-        }
-
-        try {
-          scrapeResult = await scrapeProduct(product.url, { headless: true });
-        } catch (unexpectedErr) {
-          // scrapeProduct() should never throw, but guard anyway
-          const durationMs = Date.now() - startTime;
-          const msg = `Unexpected error: ${unexpectedErr.message}`;
-          console.error(`[cron] Unexpected error for product ${product.id}: ${msg}`);
-          await db.saveScrapeLog(product.id, "FAILED", 0, msg, durationMs).catch((e) =>
-            console.error("[cron] Failed to write error log:", e.message)
+        const scrapeResult = await runScrapeAndAlert(product, globalAlertEmail);
+        
+        if (scrapeResult.success) {
+          results.success++;
+          console.log(
+            `[cron] ✅ Product ${product.id}: price=${scrapeResult.price} ` +
+            `mrp=${scrapeResult.mrp} inStock=${scrapeResult.inStock}`
           );
-          results.failed++;
-          results.errors.push({ id: product.id, error: msg });
-          continue; // Move on to next product
-        }
-
-        const durationMs = Date.now() - startTime;
-
-        if (scrapeResult.success && scrapeResult.price !== null) {
-          // --- Successful scrape ---
-          try {
-            await db.savePriceHistory(
-              product.id,
-              scrapeResult.price,
-              scrapeResult.mrp,
-              scrapeResult.inStock
-            );
-            
-            if (scrapeResult.title && scrapeResult.title !== product.name) {
-              await db.updateProductName(product.id, scrapeResult.title);
-            }
-            
-            await db.saveScrapeLog(
-              product.id,
-              "SUCCESS",
-              scrapeResult.attempts,
-              "Scheduled scrape completed successfully",
-              durationMs
-            );
-            results.success++;
-            console.log(
-              `[cron] ✅ Product ${product.id}: price=${scrapeResult.price} ` +
-              `mrp=${scrapeResult.mrp} inStock=${scrapeResult.inStock}`
-            );
-
-            // --- Alerts ---
-            if (previousState && globalAlertEmail) {
-              try {
-                // 1. Price drop alert
-                if (
-                  typeof previousState.price === 'number' &&
-                  typeof scrapeResult.price === 'number' &&
-                  scrapeResult.price < previousState.price
-                ) {
-                  await alerts.sendPriceDropAlert({
-                    recipient: globalAlertEmail,
-                    productName: scrapeResult.title || product.name,
-                    productUrl: product.url,
-                    oldPrice: previousState.price,
-                    newPrice: scrapeResult.price
-                  });
-                }
-
-                // 2. Back-in-stock alert
-                if (
-                  previousState.in_stock === false &&
-                  scrapeResult.inStock === true
-                ) {
-                  await alerts.sendBackInStockAlert({
-                    recipient: globalAlertEmail,
-                    productName: scrapeResult.title || product.name,
-                    productUrl: product.url,
-                    price: scrapeResult.price
-                  });
-                }
-              } catch (alertErr) {
-                console.error(`[cron] Alert error for product ${product.id}:`, alertErr.message);
-              }
-            }
-          } catch (dbErr) {
-            console.error(`[cron] DB write error for product ${product.id}:`, dbErr.message);
-            results.failed++;
-            results.errors.push({ id: product.id, error: dbErr.message });
-          }
         } else {
-          // --- Failed scrape — log only, never write price_history ---
-          try {
-            await db.saveScrapeLog(
-              product.id,
-              "FAILED",
-              scrapeResult.attempts,
-              scrapeResult.error || "Scrape failed without explicit error",
-              durationMs
-            );
-            results.failed++;
-            console.warn(
-              `[cron] ❌ Product ${product.id} FAILED: ${scrapeResult.error}`
-            );
-          } catch (dbErr) {
-            console.error(`[cron] DB log error for product ${product.id}:`, dbErr.message);
-          }
+          results.failed++;
+          console.warn(
+            `[cron] ❌ Product ${product.id} FAILED: ${scrapeResult.error}`
+          );
         }
       }
     } finally {

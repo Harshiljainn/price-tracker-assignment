@@ -58,7 +58,7 @@ async function runTests() {
 
     await test("4. Missing SendGrid API key does not crash", async () => {
       process.env.SENDGRID_API_KEY = '';
-      const res = await alerts.sendPriceDropAlert({
+      const res = await alerts.sendPriceChangeAlert({
         recipient: 'user@test.com',
         productName: 'Test Product',
         productUrl: 'http://test.com',
@@ -71,7 +71,7 @@ async function runTests() {
     });
 
     await test("4b. Missing recipient email does not crash", async () => {
-      const res = await alerts.sendPriceDropAlert({
+      const res = await alerts.sendPriceChangeAlert({
         recipient: null,
         productName: 'Test Product',
         productUrl: 'http://test.com',
@@ -83,7 +83,7 @@ async function runTests() {
     });
 
     await test("4c. Invalid recipient email does not crash", async () => {
-      const res = await alerts.sendPriceDropAlert({
+      const res = await alerts.sendPriceChangeAlert({
         recipient: 'not-a-valid-email',
         productName: 'Test Product',
         productUrl: 'http://test.com',
@@ -96,7 +96,7 @@ async function runTests() {
 
     await test("5. SendGrid failure does not crash", async () => {
       mockShouldThrow = true;
-      const res = await alerts.sendPriceDropAlert({
+      const res = await alerts.sendPriceChangeAlert({
         recipient: 'user@test.com',
         productName: 'Test Product',
         productUrl: 'http://test.com',
@@ -113,7 +113,7 @@ async function runTests() {
       delete process.env.ALERT_EMAIL_RECIPIENT;
       mockSendCallCount = 0;
 
-      const res = await alerts.sendPriceDropAlert({
+      const res = await alerts.sendPriceChangeAlert({
         recipient: 'explicit@recipient.com',
         productName: 'Test Product',
         productUrl: 'http://test.com',
@@ -129,7 +129,7 @@ async function runTests() {
       mockSendCallCount = 0;
       lastMockMessage = null;
 
-      const res = await alerts.sendPriceDropAlert({
+      const res = await alerts.sendPriceChangeAlert({
         recipient: 'user@test.com',
         productName: 'Vantablack Earbuds Pro',
         productUrl: 'https://test.com/v-buds',

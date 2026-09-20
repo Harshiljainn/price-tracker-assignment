@@ -44,9 +44,9 @@ require(alertsPath);
 let alertMockLogs = [];
 let mockAlertsShouldThrowFor = null;
 require.cache[alertsPath].exports = {
-  sendPriceDropAlert: async (data) => {
+  sendPriceChangeAlert: async (data) => {
     if (mockAlertsShouldThrowFor === data.productName) throw new Error('Mock Alert Send Error');
-    alertMockLogs.push({ type: 'drop', data });
+    alertMockLogs.push({ type: 'price', data });
     return { success: true };
   },
   sendBackInStockAlert: async (data) => {
@@ -117,7 +117,7 @@ async function runTests() {
       await new Promise(r => setTimeout(r, 100));
 
       assert.strictEqual(alertMockLogs.length, 1);
-      assert.strictEqual(alertMockLogs[0].type, 'drop');
+      assert.strictEqual(alertMockLogs[0].type, 'price');
       assert.strictEqual(alertMockLogs[0].data.oldPrice, 100);
       assert.strictEqual(alertMockLogs[0].data.newPrice, 80);
       assert.strictEqual(alertMockLogs[0].data.recipient, 'user@test.com');
@@ -134,7 +134,7 @@ async function runTests() {
       assert.strictEqual(alertMockLogs.length, 0);
     });
 
-    await test("100 -> 120 = no alert", async () => {
+    await test("100 -> 120 = price increase alert", async () => {
       mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1" }];
       mockPriceHistoryMap = { "product-1": [{ price: 100, in_stock: true }] };
       mockScrapeResults = { "product-1": { success: true, price: 120, inStock: true } };
@@ -142,7 +142,8 @@ async function runTests() {
 
       await makeRequest(baseUrl);
       await new Promise(r => setTimeout(r, 100));
-      assert.strictEqual(alertMockLogs.length, 0);
+      assert.strictEqual(alertMockLogs.length, 1);
+      assert.strictEqual(alertMockLogs[0].type, 'price');
     });
 
     await test("first scrape = no alert", async () => {

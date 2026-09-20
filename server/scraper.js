@@ -50,10 +50,10 @@ const MAX_ATTEMPTS = 3;
 const BASE_RETRY_DELAY_MS = 1000;
 
 /** Navigation timeout — 15s is plenty for a fast VPS-hosted demo store. */
-const NAV_TIMEOUT_MS = 15000;
+const NAV_TIMEOUT_MS = 20000;
 
 /** How long to wait for .price-block to appear after page load. */
-const PRICE_BLOCK_WAIT_MS = 5000;
+const PRICE_BLOCK_WAIT_MS = 10000;
 
 /**
  * How long the adaptive hover gesture is allowed to run before giving up
@@ -518,10 +518,7 @@ async function attemptScrapeWithPage(page, url, attemptNum) {
   try {
     await block.waitFor({ state: "visible", timeout: PRICE_BLOCK_WAIT_MS });
   } catch (blockErr) {
-    const hardErr = new Error(`Price block not found: ${blockErr.message}`);
-    // No price-block at all → likely wrong page or hard 404
-    hardErr.isHardFailure = true;
-    throw hardErr;
+    throw new Error(`Price block not found (bot block or slow page): ${blockErr.message}`);
   }
   timings.priceBlock = Date.now() - tBlock0;
   console.log(`${tag} .price-block visible. [+${timings.priceBlock}ms]`);
@@ -674,10 +671,12 @@ async function attemptScrapeWithPage(page, url, attemptNum) {
       .evaluate((el) => el.outerHTML)
       .catch(() => "(could not read outerHTML)");
     console.error(`${tag} Raw .price-block HTML:\n${rawHtml}`);
-    throw new Error(
+    const err = new Error(
       "Price extraction returned null — no pv-* container or scorable visible price element found. " +
         "Possible selector drift or DOM structure change."
     );
+    err.isHardFailure = true; // Retrying won't fix a broken selector
+    throw err;
   }
 
   return { price, mrp, inStock, quantity, title, timings };
@@ -747,15 +746,12 @@ async function scrapeProduct(url, { headless = true } = {}) {
           `[scraper] Retry ${attempt - 1} after: "${lastError}". ` +
           `Waiting ${BASE_RETRY_DELAY_MS}ms before attempt ${attempt}...`
         );
-        await new Promise((r) => setTimeout(r, BASE_RETRY_DELAY_MS));
+        await new Promise(r => setTimeout(r, BASE_RETRY_DELAY_MS));
       }
 
       // Create a FRESH context and page for every attempt.
       // Reusing the same page triggers the store's heavy anti-bot (withholding .price-block).
       const context = await browser.newContext({
-        userAgent:
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         viewport: { width: 1280, height: 800 },
       });
       const page = await context.newPage();
@@ -785,7 +781,7 @@ async function scrapeProduct(url, { headless = true } = {}) {
       } catch (err) {
         lastError = err.message || String(err);
         console.error(`[scraper] Attempt ${attempt} FAILED: ${lastError}`);
-        await context.close();
+        await context.close().catch(() => {});
 
         // Hard failures — don't waste time retrying
         if (err.isHardFailure) {
@@ -794,6 +790,8 @@ async function scrapeProduct(url, { headless = true } = {}) {
         }
       }
     }
+
+
   } finally {
     if (browser) {
       await browser.close().catch(() => {});

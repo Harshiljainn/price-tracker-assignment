@@ -50,7 +50,7 @@ function escapeHtml(text) {
 }
 
 /**
- * Sends a price drop alert email via SendGrid.
+ * Sends a price change alert email via SendGrid.
  * Does not throw errors to prevent crashing the caller.
  * 
  * @param {Object} params
@@ -61,38 +61,40 @@ function escapeHtml(text) {
  * @param {number} params.newPrice
  * @returns {Promise<Object>} { success: boolean, skipped?: boolean }
  */
-async function sendPriceDropAlert({ recipient, productName, productUrl, oldPrice, newPrice }) {
+async function sendPriceChangeAlert({ recipient, productName, productUrl, oldPrice, newPrice }) {
   try {
     const config = checkConfiguration();
     if (!config.canSend) {
-      console.warn('[alerts] Missing SendGrid configuration (API Key or Sender). Skipping price drop alert.');
+      console.warn('[alerts] Missing SendGrid configuration (API Key or Sender). Skipping price change alert.');
       return { success: false, skipped: true };
     }
 
     if (!recipient || !/^\S+@\S+\.\S+$/.test(recipient)) {
-      console.warn(`[alerts] Missing or invalid recipient email for price drop alert. Skipping.`);
+      console.warn(`[alerts] Missing or invalid recipient email for price change alert. Skipping.`);
       return { success: false, skipped: true };
     }
 
-    const savedAmount = oldPrice - newPrice;
-    let dropPercentage = 0;
+    const priceDiff = newPrice - oldPrice;
+    const isDrop = priceDiff < 0;
+    const diffAmount = Math.abs(priceDiff);
+    
+    let changePercentage = 0;
     if (oldPrice > 0) {
-      dropPercentage = Math.round((savedAmount / oldPrice) * 100);
+      changePercentage = Math.round((diffAmount / oldPrice) * 100);
     }
 
     const safeProductName = escapeHtml(productName);
     const safeProductUrl = escapeHtml(productUrl);
 
-    const subject = `Price Drop Alert: ${productName}`;
+    const subject = isDrop ? `Price Drop Alert: ${productName}` : `Price Increased: ${productName}`;
     const textBody = `
-Price Drop Alert
+Price Change Alert
 
 Product: ${productName}
 
 Previous Price: ${formatCurrency(oldPrice)}
 New Price: ${formatCurrency(newPrice)}
-You Save: ${formatCurrency(savedAmount)}
-Drop: ${dropPercentage}%
+Change: ${isDrop ? 'Dropped' : 'Increased'} by ${formatCurrency(diffAmount)} (${changePercentage}%)
 
 View Product: ${productUrl}
 
@@ -108,9 +110,9 @@ You are receiving this because you enabled alerts for this product on Price Trac
     </div>
     
     <div style="padding: 30px 20px;">
-      <h2 style="margin: 0 0 15px 0; font-size: 22px; color: #10b981;">Price Drop Alert!</h2>
+      <h2 style="margin: 0 0 15px 0; font-size: 22px; color: ${isDrop ? '#10b981' : '#f59e0b'};">Price ${isDrop ? 'Drop' : 'Increased'} Alert!</h2>
       <p style="margin: 0 0 20px 0; font-size: 16px; line-height: 1.5; color: #3f3f46;">
-        Good news! The price has dropped for a product you are tracking.
+        The price has changed for a product you are tracking.
       </p>
       
       <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 15px; margin-bottom: 25px;">
@@ -123,11 +125,11 @@ You are receiving this because you enabled alerts for this product on Price Trac
           </tr>
           <tr>
             <td style="padding: 5px 0; color: #64748b; font-size: 14px; font-weight: bold;">New Price:</td>
-            <td style="padding: 5px 0; text-align: right; font-weight: bold; color: #10b981; font-size: 20px;">${escapeHtml(formatCurrency(newPrice))}</td>
+            <td style="padding: 5px 0; text-align: right; font-weight: bold; color: ${isDrop ? '#10b981' : '#f59e0b'}; font-size: 20px;">${escapeHtml(formatCurrency(newPrice))}</td>
           </tr>
           <tr>
-            <td style="padding: 5px 0; color: #64748b; font-size: 14px;">You Save:</td>
-            <td style="padding: 5px 0; text-align: right; color: #0f172a; font-size: 14px;">${escapeHtml(formatCurrency(savedAmount))} (${dropPercentage}%)</td>
+            <td style="padding: 5px 0; color: #64748b; font-size: 14px;">Difference:</td>
+            <td style="padding: 5px 0; text-align: right; color: #0f172a; font-size: 14px;">${isDrop ? 'Dropped' : 'Increased'} by ${escapeHtml(formatCurrency(diffAmount))} (${changePercentage}%)</td>
           </tr>
         </table>
       </div>
@@ -158,11 +160,11 @@ You are receiving this because you enabled alerts for this product on Price Trac
     };
 
     await sgMail.send(msg);
-    console.log(`[alerts] Successfully sent price drop email for: ${productName}`);
+    console.log(`[alerts] Successfully sent price change email for: ${productName}`);
     return { success: true };
 
   } catch (error) {
-    console.error(`[alerts] Failed to send price drop email for ${productName}:`, error.response?.body || error.message);
+    console.error(`[alerts] Failed to send price change email for ${productName}:`, error.response?.body || error.message);
     return { success: false, skipped: true };
   }
 }
@@ -271,7 +273,7 @@ You are receiving this because you enabled alerts for this product on Price Trac
 }
 
 module.exports = {
-  sendPriceDropAlert,
+  sendPriceChangeAlert,
   sendBackInStockAlert,
   formatCurrency // exported for testing
 };

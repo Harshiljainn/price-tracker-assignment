@@ -144,6 +144,7 @@ export default function Dashboard({ onViewDetails }) {
     try {
       await api.setAlertEmail(alertEmail || '');
       setAlertMessage('Alert email updated!');
+      setAlertEmail('');
       setTimeout(() => setAlertMessage(''), 3000);
     } catch (err) {
       setAlertMessage(err.message || 'Failed to update alert email');
@@ -231,7 +232,7 @@ export default function Dashboard({ onViewDetails }) {
         </div>
 
         {/* Bottom Row: Email + Set Alert */}
-        <div style={{ position: 'relative', display: 'flex', flex: '1 1 300px', maxWidth: '400px' }}>
+        <div style={{ position: 'relative', display: 'flex', flex: '1 1 400px', maxWidth: '600px' }}>
           <div className="add-product-form" style={{ width: '100%' }}>
             <input
               type="email"
