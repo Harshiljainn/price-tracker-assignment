@@ -1,0 +1,15 @@
+# Node modules
+node_modules/
+
+# Environment variables
+.env
+.env.local
+
+# Frontend build output
+dist/
+build/
+
+# IDE and OS files
+.vscode/
+.DS_Store
+Thumbs.db
