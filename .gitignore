@@ -13,3 +13,22 @@ build/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# ── Server debug / investigation artifacts ─────────────────────────────────────
+# Underscore-prefixed probe/inspect one-off scripts
+server/_*.js
+
+# Investigation and probe scripts
+server/investigate*.js
+server/probe_*.js
+
+# Captured HTML dumps and screenshots from debugging sessions
+server/*.html
+server/*.png
+
+# Extracted store JS bundle (debug artifact, not part of the app)
+server/bundle.js
+
+# Scratch real-scrape timing scripts (not part of the test suite)
+server/test_manual_scrape.js
+server/test_real_scrape.js
