@@ -239,43 +239,47 @@ function parseQuantity(badgeText) {
 /**
  * Extract price, mrp, and stock status from the revealed .price-block.
  *
- * DOM STRUCTURE (as of Sep 2026 — after store redesign):
+ * DOM STRUCTURE (as of Sep 2026):
  *
- *   <div class="price-block price-success pw-q9">
+ *   <div class="price-block price-success pw-k2">
  *     <div class="price-main">
- *       <span class="price-value" aria-hidden="true" style="display:none">₹29,836</span>  ← hidden, skip
- *       <span class="mr-q9" style="text-decoration: line-through;">₹56,554</span>          ← MRP
- *       <b class="{random} pv-q9" style="font-size: 2.4rem; font-weight: 700;">₹34,498</b> ← SELLING PRICE
- *       <span class="bd-q9">39% off</span>
- *       <span class="amount" data-price="true" aria-hidden="true" style="display:none">₹34,412</span> ← hidden, skip
+ *       <span class="price-value" aria-hidden="true" style="display:none">₹94,902</span>  ← hidden, skip
+ *       <span class="mr-k2" style="text-decoration: line-through;">₹91,328</span>          ← MRP (struck-through)
+ *       <div class="vydk72a pv-k2" style="font-size: 2.4rem; font-weight: 700;">           ← SELLING PRICE (pv-*)
+ *         <span>₹</span><span>8</span><span>1</span><span>,</span>                        ← digits split across spans
+ *         <span>2</span><span>8</span><span>2</span>
+ *       </div>
+ *       <span class="bd-k2">1% off</span>
+ *       <span class="amount" data-price="true" aria-hidden="true" style="display:none">₹48,773</span> ← hidden, skip
  *     </div>
  *     <div class="price-facets">
- *       <span class="stock-badge in-stock">Hurry, just 199 left</span>
+ *       <span class="stock-badge in-stock">Only 46 left</span>
  *     </div>
  *   </div>
  *
- * UNIFIED SCORING ALGORITHM:
- *   Scores every visible leaf node. Penalizes "deal/off/%" text heavily (−100),
- *   rewards pv-q9 class (+50), currency symbol (+10), bold element (+5).
- *   Struck-through elements → MRP candidates.
- *   Falls back to font-size tie-breaking only when semantic signals tie.
- *   Returns null if no candidate scores ≥ 0 (e.g. all visible text is discount labels).
- *
- * NOTE: Several elements carry aria-hidden="true" or display:none — always
- * check isVisible() to skip these.
+ * EXTRACTION STRATEGY:
+ *  1. PRIMARY: Find the first visible element inside .price-main whose class
+ *     matches /pv-/ (e.g. pv-k2, pv-q9). This is always the selling price
+ *     container. Concatenate all child text nodes to reconstruct the price.
+ *  2. MRP: Find the first struck-through visible element inside .price-main
+ *     whose class matches /mr-/ (e.g. mr-k2, mr-q9).
+ *  3. FALLBACK (if no pv- element found): Use the unified scoring algorithm
+ *     on visible leaf nodes, scoring based on font-size, bold, currency symbol.
  *
  * @param {import('playwright').Page} page
  * @returns {Promise<{price: number|null, mrp: number|null, inStock: boolean|null, quantity: number|null, title: string|null}>}
  */
 async function extractPriceData(page) {
   const raw = await page.evaluate(() => {
-    function normalize(str) {
+    function normalizeText(str) {
       if (!str) return "";
       return str
         .replace(/[\uFF10-\uFF19]/g, (ch) =>
           String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 48)
         )
-        .replace(/\u200b/g, "");
+        .replace(/\u200b/g, "") // zero-width spaces
+        .replace(/\u00a0/g, " ") // non-breaking spaces
+        .trim();
     }
 
     function isVisible(el) {
@@ -283,6 +287,7 @@ async function extractPriceData(page) {
       return (
         st.display !== "none" &&
         st.visibility !== "hidden" &&
+        parseFloat(st.opacity) > 0 &&
         el.getAttribute("aria-hidden") !== "true"
       );
     }
@@ -291,9 +296,9 @@ async function extractPriceData(page) {
       return parseFloat(window.getComputedStyle(el).fontSize) || 0;
     }
 
-    function hasPriceAndCurrency(text) {
-      const t = normalize(text);
-      return (t.match(/\d/g) || []).length >= 2 && /₹|INR/i.test(t);
+    // Gather all text content including from split-span children
+    function getFullText(el) {
+      return normalizeText(el.textContent);
     }
 
     // Extract title from h1
@@ -302,98 +307,130 @@ async function extractPriceData(page) {
 
     const blocks = document.querySelectorAll(".price-block");
     const priceBlock = blocks[blocks.length - 1];
-    if (!priceBlock) return { priceText: null, mrpText: null, stockText: "", titleText };
+    if (!priceBlock) return { priceText: null, mrpText: null, stockText: "", titleText, debug: {} };
 
     const badge =
       priceBlock.querySelector(".stock-badge") ||
       document.querySelector(".stock-badge");
     const stockText = badge ? badge.textContent.trim() : "";
 
-    // ---- UNIFIED SCORING ALGORITHM FOR PRICES ----
+    const priceMain = priceBlock.querySelector(".price-main") || priceBlock;
+
     let priceText = null;
     let mrpText = null;
+    let debugInfo = { strategy: null, elementTag: null, elementClass: null, rawText: null };
 
-    const allEls = [...priceBlock.querySelectorAll("*")];
-    const candidates = [];
-    const mrpCandidates = [];
-
-    for (const el of allEls) {
+    // ---- STRATEGY 1: Targeted pv-* element (selling price container) ----
+    // The selling price is always in an element whose class list includes a
+    // token matching /^pv-/ (e.g. pv-k2, pv-q9). This element may have
+    // its digits split across many <span> children.
+    const allMainEls = [...priceMain.querySelectorAll("*")];
+    let pvEl = null;
+    for (const el of allMainEls) {
       if (!isVisible(el)) continue;
+      // Match class token starting with "pv-"
+      const hasPvClass = [...el.classList].some(cls => /^pv-/.test(cls));
+      if (hasPvClass) {
+        pvEl = el;
+        break;
+      }
+    }
 
-      const text = normalize(el.textContent.trim());
-      // Must have some numbers to be a price
-      if (!/\d/.test(text)) continue;
-      
-      // We only want leaf nodes (or nodes where the text is directly inside it, not just a massive container)
-      // A good heuristic: if any child also contains numbers, skip the parent.
-      let childHasNumbers = false;
-      for (const child of el.children) {
-        if (/\d/.test(normalize(child.textContent))) {
-          childHasNumbers = true;
+    if (pvEl) {
+      const fullText = getFullText(pvEl);
+      priceText = fullText;
+      debugInfo.strategy = "pv-class-match";
+      debugInfo.elementTag = pvEl.tagName;
+      debugInfo.elementClass = pvEl.className;
+      debugInfo.rawText = fullText;
+    }
+
+    // ---- MRP: Targeted mr-* element (struck-through MRP) ----
+    // The MRP is always in an element whose class includes a token matching /^mr-/
+    for (const el of allMainEls) {
+      if (!isVisible(el)) continue;
+      const hasMrClass = [...el.classList].some(cls => /^mr-/.test(cls));
+      if (hasMrClass) {
+        const st = window.getComputedStyle(el);
+        const isStruck =
+          st.textDecoration.includes("line-through") ||
+          el.style.textDecoration.includes("line-through");
+        if (isStruck) {
+          mrpText = getFullText(el);
           break;
         }
       }
-      if (childHasNumbers) continue;
-
-      const st = window.getComputedStyle(el);
-      const isStruck = st.textDecoration.includes("line-through") || el.style.textDecoration.includes("line-through") || el.classList.contains("mr-q9");
-      
-      if (isStruck) {
-        mrpCandidates.push({ el, text, fs: getFontSizePx(el) });
-        continue;
-      }
-
-      // It's a candidate for the final price. Let's score it!
-      let score = 0;
-      
-      const lowerText = text.toLowerCase();
-      
-      // Penalties for deal labels, off percentages, etc.
-      if (lowerText.includes("deal") || lowerText.includes("save") || lowerText.includes("off") || lowerText.includes("%") || lowerText.includes("mrp")) {
-        score -= 100;
-      }
-
-      // Bonus for being the exact class
-      if (el.classList.contains("pv-q9")) {
-        score += 50;
-      }
-
-      // Bonus for explicit currency symbol
-      if (lowerText.includes("₹") || lowerText.includes("inr")) {
-        score += 10;
-      }
-
-      // Bonus for bold
-      if (st.fontWeight === "700" || st.fontWeight === "bold" || el.tagName.toLowerCase() === "b" || el.tagName.toLowerCase() === "strong") {
-        score += 5;
-      }
-      
-      // Add a tiny bit of score based on font size (e.g. 24px = 2.4 score) to break ties
-      score += getFontSizePx(el) / 10;
-
-      candidates.push({ el, text, score });
     }
 
-    // Sort by highest score first
-    candidates.sort((a, b) => b.score - a.score);
-    mrpCandidates.sort((a, b) => b.fs - a.fs); // For MRP, largest struck-through is fine
+    // ---- STRATEGY 2: Fallback scoring (if no pv- element found) ----
+    if (!priceText) {
+      debugInfo.strategy = "fallback-scoring";
+      const candidates = [];
+      const mrpCandidates = [];
 
-    if (candidates.length > 0 && candidates[0].score >= 0) {
-      // If the top score is extremely negative (e.g. all remaining elements were "deal 50% off"), return null
-      priceText = candidates[0].text;
-    }
-    
-    if (mrpCandidates.length > 0) {
-      mrpText = mrpCandidates[0].text;
+      for (const el of allMainEls) {
+        if (!isVisible(el)) continue;
+        const text = getFullText(el);
+        if (!/\d/.test(text)) continue;
+
+        const st = window.getComputedStyle(el);
+        const isStruck =
+          st.textDecoration.includes("line-through") ||
+          el.style.textDecoration.includes("line-through");
+
+        if (isStruck) {
+          if (!mrpText) mrpCandidates.push({ el, text, fs: getFontSizePx(el) });
+          continue;
+        }
+
+        // Skip hidden-price elements
+        if (el.getAttribute("aria-hidden") === "true") continue;
+        if (el.dataset && el.dataset.price === "true") continue;
+        if ([...el.classList].some(c => c === "price-value" || c === "amount")) continue;
+
+        let score = 0;
+        const lowerText = text.toLowerCase();
+        if (lowerText.includes("deal") || lowerText.includes("save") ||
+            lowerText.includes("off") || lowerText.includes("%") ||
+            lowerText.includes("mrp")) {
+          score -= 100;
+        }
+        if (text.includes("₹") || /inr/i.test(text)) score += 10;
+        const fw = st.fontWeight;
+        if (fw === "700" || fw === "bold" || el.tagName === "B" || el.tagName === "STRONG") score += 5;
+        score += getFontSizePx(el) / 10;
+
+        candidates.push({ el, text, score });
+      }
+
+      candidates.sort((a, b) => b.score - a.score);
+      if (candidates.length > 0 && candidates[0].score >= 0) {
+        priceText = candidates[0].text;
+        debugInfo.elementTag = candidates[0].el.tagName;
+        debugInfo.elementClass = candidates[0].el.className;
+        debugInfo.rawText = candidates[0].text;
+      }
+
+      if (mrpCandidates.length > 0 && !mrpText) {
+        mrpCandidates.sort((a, b) => b.fs - a.fs);
+        mrpText = mrpCandidates[0].text;
+      }
     }
 
-    return { priceText, mrpText, stockText, titleText };
+    return { priceText, mrpText, stockText, titleText, debug: debugInfo };
   });
+
+  // Debug logging
+  console.log(`[extractPriceData] strategy=${raw.debug.strategy} element=<${raw.debug.elementTag} class="${raw.debug.elementClass}">`);
+  console.log(`[extractPriceData] rawText="${raw.debug.rawText}"`);
 
   const price = parsePrice(raw.priceText);
   const mrp = parsePrice(raw.mrpText);
   const inStock = parseStock(raw.stockText);
   const quantity = parseQuantity(raw.stockText);
+
+  console.log(`[extractPriceData] priceText="${raw.priceText}" → price=${price}`);
+  console.log(`[extractPriceData] mrpText="${raw.mrpText}" → mrp=${mrp}`);
 
   return { price, mrp, inStock, quantity, stockText: raw.stockText, title: raw.titleText };
 }
@@ -638,9 +675,8 @@ async function attemptScrapeWithPage(page, url, attemptNum) {
       .catch(() => "(could not read outerHTML)");
     console.error(`${tag} Raw .price-block HTML:\n${rawHtml}`);
     throw new Error(
-      "Price extraction returned null — <output> element missing, " +
-        "full-width digits not found, or fewer than 2 digits extracted. " +
-        "Possible selector drift."
+      "Price extraction returned null — no pv-* container or scorable visible price element found. " +
+        "Possible selector drift or DOM structure change."
     );
   }
 
