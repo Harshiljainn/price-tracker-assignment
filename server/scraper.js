@@ -29,6 +29,9 @@
  * (_inspect_price*.js, _tmp.js).
  */
 
+// Force Playwright to look for browsers inside the local project (node_modules)
+// instead of the global OS cache, which Render drops between build and run.
+process.env.PLAYWRIGHT_BROWSERS_PATH = '0';
 const { chromium } = require("playwright");
 
 // ---------------------------------------------------------------------------
