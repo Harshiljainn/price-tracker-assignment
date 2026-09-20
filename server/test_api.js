@@ -109,8 +109,7 @@ async function runTests() {
     console.log("\n2. POST /api/products");
     res = await makeRequest(baseUrl, "POST", "/api/products", {
       name: "API Test Product",
-      url: `https://demo.inelabteamdev.com/product/api-test-${Date.now()}`,
-      alertEmail: "test@example.com"
+      url: `https://demo.inelabteamdev.com/product/api-test-${Date.now()}`
     });
     console.log(`Status: ${res.statusCode}`);
     assert.strictEqual(res.statusCode, 201);
@@ -118,25 +117,22 @@ async function runTests() {
     createdProductId = res.data.id;
     console.log("✅ Passed, created ID:", createdProductId);
 
-    // 2a. Missing email → 400
-    console.log("\n2a. POST /api/products (Missing email → 400)");
-    res = await makeRequest(baseUrl, "POST", "/api/products", {
-      url: `https://demo.inelabteamdev.com/product/no-email-${Date.now()}`
+    // 2a. PUT /api/settings/alert-email
+    console.log("\n2a. PUT /api/settings/alert-email");
+    res = await makeRequest(baseUrl, "PUT", "/api/settings/alert-email", {
+      email: "test_global@example.com"
     });
     console.log(`Status: ${res.statusCode}`);
-    assert.strictEqual(res.statusCode, 400);
-    assert.ok(res.data.error.includes('email'));
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.data.email, "test_global@example.com");
     console.log("✅ Passed");
 
-    // 2b. Invalid email → 400
-    console.log("\n2b. POST /api/products (Invalid email → 400)");
-    res = await makeRequest(baseUrl, "POST", "/api/products", {
-      url: `https://demo.inelabteamdev.com/product/bad-email-${Date.now()}`,
-      alertEmail: "notanemail"
-    });
+    // 2b. GET /api/settings/alert-email
+    console.log("\n2b. GET /api/settings/alert-email");
+    res = await makeRequest(baseUrl, "GET", "/api/settings/alert-email");
     console.log(`Status: ${res.statusCode}`);
-    assert.strictEqual(res.statusCode, 400);
-    assert.ok(res.data.error.includes('email'));
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.data.email, "test_global@example.com");
     console.log("✅ Passed");
 
     // 3. Get all products
@@ -241,13 +237,13 @@ async function runTests() {
     console.log(`\n10. POST /api/products (Duplicate URL → should return 409)`);
     const dedupUrl = `https://demo.inelabteamdev.com/product/dedup-test-${Date.now()}`;
     // First creation — should succeed
-    let dedupRes1 = await makeRequest(baseUrl, "POST", "/api/products", { url: dedupUrl, alertEmail: "test@example.com" });
+    let dedupRes1 = await makeRequest(baseUrl, "POST", "/api/products", { url: dedupUrl });
     const dedupId = dedupRes1.data.id;
     assert.strictEqual(dedupRes1.statusCode, 201, `Expected 201 on first create, got ${dedupRes1.statusCode}`);
     console.log(`  First creation → 201 ✅`);
 
     // Second creation with same URL — should return 409
-    let dedupRes2 = await makeRequest(baseUrl, "POST", "/api/products", { url: dedupUrl, alertEmail: "test@example.com" });
+    let dedupRes2 = await makeRequest(baseUrl, "POST", "/api/products", { url: dedupUrl });
     assert.strictEqual(dedupRes2.statusCode, 409, `Expected 409 on duplicate create, got ${dedupRes2.statusCode}`);
     assert.strictEqual(dedupRes2.data.error, "DUPLICATE_PRODUCT", `Expected DUPLICATE_PRODUCT in error body`);
     console.log(`  Duplicate URL → 409 ✅`);

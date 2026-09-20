@@ -29,13 +29,13 @@ export const api = {
     return fetchWithHandler(`${API_BASE_URL}/products/${id}`);
   },
 
-  createProduct: (url, alertEmail, name = null) => {
+  createProduct: (url, name = null) => {
     return fetchWithHandler(`${API_BASE_URL}/products`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ url, alertEmail, ...(name ? { name } : {}) }),
+      body: JSON.stringify({ url, ...(name ? { name } : {}) }),
     });
   },
 
@@ -57,5 +57,19 @@ export const api = {
 
   getProductLogs: (id) => {
     return fetchWithHandler(`${API_BASE_URL}/products/${id}/logs`);
+  },
+
+  getAlertEmail: () => {
+    return fetchWithHandler(`${API_BASE_URL}/settings/alert-email`);
+  },
+
+  setAlertEmail: (email) => {
+    return fetchWithHandler(`${API_BASE_URL}/settings/alert-email`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email }),
+    });
   }
 };

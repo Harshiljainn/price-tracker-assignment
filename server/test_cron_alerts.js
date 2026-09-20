@@ -28,12 +28,14 @@ const dbPath = require.resolve("./db");
 require(dbPath);
 let mockProducts = [];
 let mockPriceHistoryMap = {};
+let mockGlobalAlertEmail = null;
 require.cache[dbPath].exports = {
   getTrackedProducts: async () => mockProducts,
   savePriceHistory: async () => ({ id: "mock-ph-id" }),
   saveScrapeLog: async () => ({ id: "mock-log-id" }),
   updateProductName: async () => true,
   getPriceHistory: async (id) => mockPriceHistoryMap[id] || [],
+  getGlobalAlertEmail: async () => mockGlobalAlertEmail,
 };
 
 // 3. Mock Alerts — capture calls with recipient
@@ -104,10 +106,11 @@ async function runTests() {
   }
 
   try {
-    await test("100 -> 80 = price-drop alert with stored product email", async () => {
-      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1", alert_email: "user@test.com" }];
+    await test("100 -> 80 = price-drop alert with global email", async () => {
+      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1" }];
       mockPriceHistoryMap = { "product-1": [{ price: 100, in_stock: true }] };
       mockScrapeResults = { "product-1": { success: true, price: 80, inStock: true } };
+      mockGlobalAlertEmail = "user@test.com";
 
       const res = await makeRequest(baseUrl);
       assert.strictEqual(res.statusCode, 202);
@@ -121,9 +124,10 @@ async function runTests() {
     });
 
     await test("100 -> 100 = no alert", async () => {
-      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1", alert_email: "user@test.com" }];
+      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1" }];
       mockPriceHistoryMap = { "product-1": [{ price: 100, in_stock: true }] };
       mockScrapeResults = { "product-1": { success: true, price: 100, inStock: true } };
+      mockGlobalAlertEmail = "user@test.com";
 
       await makeRequest(baseUrl);
       await new Promise(r => setTimeout(r, 100));
@@ -131,9 +135,10 @@ async function runTests() {
     });
 
     await test("100 -> 120 = no alert", async () => {
-      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1", alert_email: "user@test.com" }];
+      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1" }];
       mockPriceHistoryMap = { "product-1": [{ price: 100, in_stock: true }] };
       mockScrapeResults = { "product-1": { success: true, price: 120, inStock: true } };
+      mockGlobalAlertEmail = "user@test.com";
 
       await makeRequest(baseUrl);
       await new Promise(r => setTimeout(r, 100));
@@ -141,9 +146,10 @@ async function runTests() {
     });
 
     await test("first scrape = no alert", async () => {
-      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1", alert_email: "user@test.com" }];
+      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1" }];
       mockPriceHistoryMap = { "product-1": [] }; // No previous history
       mockScrapeResults = { "product-1": { success: true, price: 80, inStock: true } };
+      mockGlobalAlertEmail = "user@test.com";
 
       await makeRequest(baseUrl);
       await new Promise(r => setTimeout(r, 100));
@@ -151,19 +157,21 @@ async function runTests() {
     });
 
     await test("null/failed price = no alert", async () => {
-      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1", alert_email: "user@test.com" }];
+      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1" }];
       mockPriceHistoryMap = { "product-1": [{ price: 100, in_stock: true }] };
       mockScrapeResults = { "product-1": { success: false, error: "Failed" } };
+      mockGlobalAlertEmail = "user@test.com";
 
       await makeRequest(baseUrl);
       await new Promise(r => setTimeout(r, 100));
       assert.strictEqual(alertMockLogs.length, 0);
     });
 
-    await test("false -> true = back-in-stock alert with stored product email", async () => {
-      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1", alert_email: "user@test.com" }];
+    await test("false -> true = back-in-stock alert with global email", async () => {
+      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1" }];
       mockPriceHistoryMap = { "product-1": [{ price: 100, in_stock: false }] };
       mockScrapeResults = { "product-1": { success: true, price: 100, inStock: true } };
+      mockGlobalAlertEmail = "user@test.com";
 
       await makeRequest(baseUrl);
       await new Promise(r => setTimeout(r, 100));
@@ -173,9 +181,10 @@ async function runTests() {
     });
 
     await test("true -> true = no alert", async () => {
-      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1", alert_email: "user@test.com" }];
+      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1" }];
       mockPriceHistoryMap = { "product-1": [{ price: 100, in_stock: true }] };
       mockScrapeResults = { "product-1": { success: true, price: 100, inStock: true } };
+      mockGlobalAlertEmail = "user@test.com";
 
       await makeRequest(baseUrl);
       await new Promise(r => setTimeout(r, 100));
@@ -183,19 +192,20 @@ async function runTests() {
     });
 
     await test("true -> false = no alert", async () => {
-      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1", alert_email: "user@test.com" }];
+      mockProducts = [{ id: "product-1", url: "http://test/1", name: "P1" }];
       mockPriceHistoryMap = { "product-1": [{ price: 100, in_stock: true }] };
       mockScrapeResults = { "product-1": { success: true, price: 100, inStock: false } };
+      mockGlobalAlertEmail = "user@test.com";
 
       await makeRequest(baseUrl);
       await new Promise(r => setTimeout(r, 100));
       assert.strictEqual(alertMockLogs.length, 0);
     });
 
-    await test("Missing alert_email on old product = no alert, scraping continues normally", async () => {
+    await test("No global email = no alert, scraping continues normally", async () => {
       mockProducts = [
-        { id: "product-1", url: "http://test/1", name: "P1-NoEmail", alert_email: null },  // old product, no email
-        { id: "product-2", url: "http://test/2", name: "P2-Email", alert_email: "user@test.com" }
+        { id: "product-1", url: "http://test/1", name: "P1" },
+        { id: "product-2", url: "http://test/2", name: "P2" }
       ];
       mockPriceHistoryMap = {
         "product-1": [{ price: 100, in_stock: true }],
@@ -203,21 +213,21 @@ async function runTests() {
       };
       mockScrapeResults = {
         "product-1": { success: true, price: 80, inStock: true }, // price drop, but no email → no alert
-        "product-2": { success: true, price: 70, inStock: true }  // price drop, has email → alert
+        "product-2": { success: true, price: 70, inStock: true }  // price drop, no email → no alert
       };
+      mockGlobalAlertEmail = null;
 
       await makeRequest(baseUrl);
       await new Promise(r => setTimeout(r, 200));
 
-      // Only product-2 should trigger alert
-      assert.strictEqual(alertMockLogs.length, 1);
-      assert.strictEqual(alertMockLogs[0].data.recipient, 'user@test.com');
+      // No alerts should be sent because global email is null
+      assert.strictEqual(alertMockLogs.length, 0);
     });
 
     await test("SendGrid throws an error = cron continues safely for multiple products", async () => {
       mockProducts = [
-        { id: "product-1", url: "http://test/1", name: "P1-Throw", alert_email: "user@test.com" },
-        { id: "product-2", url: "http://test/2", name: "P2-Safe", alert_email: "safe@test.com" }
+        { id: "product-1", url: "http://test/1", name: "P1-Throw" },
+        { id: "product-2", url: "http://test/2", name: "P2-Safe" }
       ];
       mockPriceHistoryMap = {
         "product-1": [{ price: 100, in_stock: true }],
@@ -227,6 +237,7 @@ async function runTests() {
         "product-1": { success: true, price: 80, inStock: true, title: "P1-Throw" },
         "product-2": { success: true, price: 70, inStock: true, title: "P2-Safe" }
       };
+      mockGlobalAlertEmail = "user@test.com";
 
       mockAlertsShouldThrowFor = "P1-Throw";
 

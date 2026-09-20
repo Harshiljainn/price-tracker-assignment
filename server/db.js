@@ -28,17 +28,16 @@ function checkClient() {
  * @param {string} url - Product URL
  * @param {string} [name] - Product Name
  * @param {string} [imageUrl] - Product Image URL
- * @param {string} [alertEmail] - User email for alerts
  * @returns {Promise<Object>} The product record
  */
-async function createTrackedProduct(url, name = null, imageUrl = null, alertEmail = null) {
+async function createTrackedProduct(url, name = null, imageUrl = null) {
   checkClient();
   
   // Try to insert, if conflict on URL, this will throw an error with code '23505'
   const { data, error } = await supabase
     .from("products")
     .insert([
-      { url, name, image_url: imageUrl, is_tracked: true, alert_email: alertEmail }
+      { url, name, image_url: imageUrl, is_tracked: true }
     ])
     .select()
     .single();
@@ -333,6 +332,45 @@ async function resolveSku(sku) {
   return url;
 }
 
+/**
+ * Retrieves the global alert email from app_settings.
+ * @returns {Promise<string|null>} The global email or null if not set
+ */
+async function getGlobalAlertEmail() {
+  checkClient();
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "global_alert_email")
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") return null; // No row found
+    throw new Error(`Failed to get global alert email: ${error.message}`);
+  }
+  return data ? data.value : null;
+}
+
+/**
+ * Sets or updates the global alert email in app_settings.
+ * @param {string} email - The email to set
+ * @returns {Promise<boolean>} True if successful
+ */
+async function setGlobalAlertEmail(email) {
+  checkClient();
+  const { error } = await supabase
+    .from("app_settings")
+    .upsert(
+      { key: "global_alert_email", value: email },
+      { onConflict: "key" }
+    );
+
+  if (error) {
+    throw new Error(`Failed to set global alert email: ${error.message}`);
+  }
+  return true;
+}
+
 module.exports = {
   supabase,
   createTrackedProduct,
@@ -344,5 +382,7 @@ module.exports = {
   getPriceHistory,
   getScrapeLogs,
   updateProductName,
-  resolveSku
+  resolveSku,
+  getGlobalAlertEmail,
+  setGlobalAlertEmail
 };

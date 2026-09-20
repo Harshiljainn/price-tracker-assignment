@@ -32,16 +32,11 @@ app.get("/api/products", async (req, res) => {
 // 2. POST /api/products
 app.post("/api/products", async (req, res) => {
   try {
-    const { name, url, image_url, alertEmail } = req.body;
+    const { name, url, image_url } = req.body;
 
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "URL or SKU is required and must be a string" });
     }
-
-    if (!alertEmail || typeof alertEmail !== "string" || !/^\S+@\S+\.\S+$/.test(alertEmail)) {
-      return res.status(400).json({ error: "Valid alert email is required" });
-    }
-
 
     let finalUrl = url;
 
@@ -60,7 +55,7 @@ app.post("/api/products", async (req, res) => {
       }
     }
 
-    const product = await db.createTrackedProduct(finalUrl, name, image_url, alertEmail);
+    const product = await db.createTrackedProduct(finalUrl, name, image_url);
     res.status(201).json(product);
   } catch (error) {
     if (error.code === 'DUPLICATE_PRODUCT') {
@@ -103,6 +98,31 @@ app.delete("/api/products/:id", async (req, res) => {
   } catch (error) {
     console.error("DELETE /api/products/:id error:", error.message);
     res.status(500).json({ error: "Failed to delete product" });
+  }
+});
+
+// Settings endpoints
+app.get("/api/settings/alert-email", async (req, res) => {
+  try {
+    const email = await db.getGlobalAlertEmail();
+    res.json({ email });
+  } catch (error) {
+    console.error("GET /api/settings/alert-email error:", error.message);
+    res.status(500).json({ error: "Failed to get global alert email" });
+  }
+});
+
+app.put("/api/settings/alert-email", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (email && (typeof email !== "string" || !/^\S+@\S+\.\S+$/.test(email))) {
+      return res.status(400).json({ error: "Valid alert email is required" });
+    }
+    await db.setGlobalAlertEmail(email || "");
+    res.json({ success: true, email: email || "" });
+  } catch (error) {
+    console.error("PUT /api/settings/alert-email error:", error.message);
+    res.status(500).json({ error: "Failed to set global alert email" });
   }
 });
 
@@ -266,6 +286,13 @@ app.post("/api/cron/scrape", async (req, res) => {
     const results = { success: 0, failed: 0, errors: [] };
 
     try {
+      let globalAlertEmail = null;
+      try {
+        globalAlertEmail = await db.getGlobalAlertEmail();
+      } catch (err) {
+        console.error("[cron] Failed to fetch global alert email:", err.message);
+      }
+
       for (const product of products) {
         console.log(`[cron] Scraping product ${product.id} — ${product.url}`);
         const startTime = Date.now();
@@ -326,7 +353,7 @@ app.post("/api/cron/scrape", async (req, res) => {
             );
 
             // --- Alerts ---
-            if (previousState && product.alert_email) {
+            if (previousState && globalAlertEmail) {
               try {
                 // 1. Price drop alert
                 if (
@@ -335,7 +362,7 @@ app.post("/api/cron/scrape", async (req, res) => {
                   scrapeResult.price < previousState.price
                 ) {
                   await alerts.sendPriceDropAlert({
-                    recipient: product.alert_email,
+                    recipient: globalAlertEmail,
                     productName: scrapeResult.title || product.name,
                     productUrl: product.url,
                     oldPrice: previousState.price,
@@ -349,7 +376,7 @@ app.post("/api/cron/scrape", async (req, res) => {
                   scrapeResult.inStock === true
                 ) {
                   await alerts.sendBackInStockAlert({
-                    recipient: product.alert_email,
+                    recipient: globalAlertEmail,
                     productName: scrapeResult.title || product.name,
                     productUrl: product.url,
                     price: scrapeResult.price

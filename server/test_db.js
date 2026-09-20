@@ -34,8 +34,7 @@ async function runTests() {
     product = await db.createTrackedProduct(
       mockUrl,
       "Test Product",
-      "https://example.com/image.png",
-      "testuser@example.com"
+      "https://example.com/image.png"
     );
     console.log("✅ Created product:", product.id);
 
@@ -43,6 +42,14 @@ async function runTests() {
     console.log("\n2. Testing getTrackedProducts()...");
     const products = await db.getTrackedProducts();
     console.log(`✅ Found ${products.length} tracked products.`);
+    
+    // 2a. Global Alert Email
+    console.log("\n2a. Testing setGlobalAlertEmail() and getGlobalAlertEmail()...");
+    await db.setGlobalAlertEmail("test_global@example.com");
+    console.log("✅ Set global alert email");
+    const globalEmail = await db.getGlobalAlertEmail();
+    console.log("✅ Retrieved global alert email:", globalEmail);
+    if (globalEmail !== "test_global@example.com") throw new Error("Global email mismatch");
     
     // 3. Save Price History
     console.log("\n3. Testing savePriceHistory()...");

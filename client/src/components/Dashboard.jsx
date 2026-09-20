@@ -15,6 +15,8 @@ export default function Dashboard({ onViewDetails }) {
 
   // Delete modal state
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, productId: null, isDeleting: false });
+  const [settingAlert, setSettingAlert] = useState(false);
+  const [alertMessage, setAlertMessage] = useState('');
 
   const fetchProducts = async () => {
     try {
@@ -28,6 +30,17 @@ export default function Dashboard({ onViewDetails }) {
     }
   };
 
+  const fetchGlobalAlertEmail = async () => {
+    try {
+      const data = await api.getAlertEmail();
+      if (data && data.email) {
+        setAlertEmail(data.email);
+      }
+    } catch (err) {
+      console.error('Failed to fetch global alert email', err);
+    }
+  };
+
   // Derive filtered list client-side instantly on every render — no debounce needed.
   const products = search
     ? allProducts.filter(p =>
@@ -38,6 +51,7 @@ export default function Dashboard({ onViewDetails }) {
   useEffect(() => {
     setLoading(true);
     fetchProducts();
+    fetchGlobalAlertEmail();
   }, []);
 
   // Briefly show a loading indicator on each search keystroke for visual feedback.
@@ -60,16 +74,11 @@ export default function Dashboard({ onViewDetails }) {
       return;
     }
 
-    if (!alertEmail || !/^\S+@\S+\.\S+$/.test(alertEmail)) {
-      setAddError('Please enter a valid email address for alerts');
-      return;
-    }
-
     setAdding(true);
     setAddError('');
     try {
       // 1. Create Tracked Product
-      const product = await api.createProduct(newUrl, alertEmail, null);
+      const product = await api.createProduct(newUrl, null);
       
       // 2. Immediately trigger scrape
       let scrapeFailed = false;
@@ -123,6 +132,24 @@ export default function Dashboard({ onViewDetails }) {
 
   const cancelDelete = () => {
     setDeleteModal({ isOpen: false, productId: null, isDeleting: false });
+  };
+
+  const handleSetAlert = async () => {
+    if (alertEmail && !/^\S+@\S+\.\S+$/.test(alertEmail)) {
+      setAlertMessage('Please enter a valid email address');
+      return;
+    }
+    setSettingAlert(true);
+    setAlertMessage('');
+    try {
+      await api.setAlertEmail(alertEmail || '');
+      setAlertMessage('Alert email updated!');
+      setTimeout(() => setAlertMessage(''), 3000);
+    } catch (err) {
+      setAlertMessage(err.message || 'Failed to update alert email');
+    } finally {
+      setSettingAlert(false);
+    }
   };
 
 
@@ -204,21 +231,22 @@ export default function Dashboard({ onViewDetails }) {
         </div>
 
         {/* Bottom Row: Email + Set Alert */}
-        <div className="add-product-form" style={{ maxWidth: '400px', flex: '1 1 300px' }}>
-          <input
-            form="add-product-form"
-            type="email"
-            placeholder="Enter email for price & stock alerts"
-            value={alertEmail}
-            onChange={(e) => { setAlertEmail(e.target.value); setAddError(''); }}
-            disabled={adding}
-            className="input-primary url-input"
-            required
-          />
-          <button form="add-product-form" type="submit" disabled={adding} className="btn-primary">
-            {adding ? <RefreshCw className="spin icon-small" /> : <Activity className="icon-small" />}
-            <span>{adding ? 'Setting...' : 'Set Alert'}</span>
-          </button>
+        <div style={{ position: 'relative', display: 'flex', flex: '1 1 300px', maxWidth: '400px' }}>
+          <div className="add-product-form" style={{ width: '100%' }}>
+            <input
+              type="email"
+              placeholder="Enter email for price & stock alerts (optional)"
+              value={alertEmail}
+              onChange={(e) => { setAlertEmail(e.target.value); setAlertMessage(''); }}
+              disabled={settingAlert}
+              className="input-primary url-input"
+            />
+            <button type="button" onClick={handleSetAlert} disabled={settingAlert} className="btn-primary">
+              {settingAlert ? <RefreshCw className="spin icon-small" /> : <Activity className="icon-small" />}
+              <span>{settingAlert ? 'Setting...' : 'Set Alert'}</span>
+            </button>
+          </div>
+          {alertMessage && <div className="error-message" style={{ position: 'absolute', top: '100%', left: '0', marginTop: '4px', color: alertMessage.includes('updated') ? 'green' : 'var(--danger)' }}>{alertMessage}</div>}
         </div>
       </div>
 
