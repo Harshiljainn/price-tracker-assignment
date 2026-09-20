@@ -611,7 +611,7 @@ async function attemptScrapeWithPage(page, url, attemptNum) {
   };
   page.on("request", reqListener);
 
-  await btn.click({ force: true });
+  await btn.click();
 
   // ---- Step 7: Wait for reveal result (event-driven) ----
   const tReveal0 = Date.now();
